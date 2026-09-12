@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLineEdit, QPushButton, QLabel, QComboBox, QFileDialog, QMessageBox, QFrame)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -20,9 +21,11 @@ class DownloadThread(QThread):
 
     def progress_hook(self, d):
         if d['status'] == 'downloading':
-            percentage = (d['downloaded_bytes'] / d['total_bytes']
-                          ) * 100 if 'total_bytes' in d else 0
-            self.progress_signal.emit(percentage, d['_percent_str'])
+            total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+            downloaded = d.get('downloaded_bytes', 0)
+            percentage = (downloaded / total) * 100 if total > 0 else 0
+            percent_str = d.get('_percent_str', f'{percentage:.1f}%').strip()
+            self.progress_signal.emit(percentage, percent_str)
         elif d['status'] == 'finished':
             self.progress_signal.emit(100, '100%')
 
@@ -32,6 +35,16 @@ class DownloadThread(QThread):
                 'format': self.format_id,
                 'outtmpl': os.path.join(self.save_path, '%(title)s.%(ext)s'),
                 'progress_hooks': [self.progress_hook],
+                'http_chunk_size': 10485760,  # 10MB chunk size to prevent 403 Forbidden throttling mid-download
+                'retries': 10,
+                'fragment_retries': 10,
+                'file_access_retries': 5,
+                'no_color': True,
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android', 'web'],
+                    }
+                },
             }
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -280,10 +293,11 @@ class YouTubeDownloader(QMainWindow):
         self.url_input.clear()
 
     def download_error(self, error):
+        clean_error = re.sub(r'\x1b\[[0-9;]*[mGKH]', '', error)
         self.download_button.setEnabled(True)
         self.download_button.setText('Start Download')
         self.status_label.setText('Status: Error occurred')
-        QMessageBox.critical(self, 'Error', f'Error:\n{error}')
+        QMessageBox.critical(self, 'Error', f'Error:\n{clean_error}')
 
 
 def main():

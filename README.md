@@ -20,8 +20,19 @@
 Before running the application, install the required libraries using pip:
 
 ```bash
-pip install yt-dlp PyQt5
+pip install -r requirements.txt
 ```
+
+### Creating a Release
+
+Push a version tag to GitHub to build and publish a Windows executable automatically:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The GitHub Actions workflow creates `VideoDownloader.exe` and attaches it to the new GitHub Release.
 
 ## How to Use
 
