@@ -1,6 +1,8 @@
 import sys
 import os
 import re
+import glob
+import time
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLineEdit, QPushButton, QLabel, QComboBox, QFileDialog, QMessageBox, QFrame)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
@@ -30,28 +32,33 @@ class DownloadThread(QThread):
             self.progress_signal.emit(100, '100%')
 
     def run(self):
+        download_started_at = time.time()
         try:
+            is_tiktok = 'tiktok.com' in self.url.lower()
             ydl_opts = {
                 'format': self.format_id,
                 'outtmpl': os.path.join(self.save_path, '%(title)s.%(ext)s'),
                 'progress_hooks': [self.progress_hook],
-                'http_chunk_size': 10485760,  # 10MB chunk size to prevent 403 Forbidden throttling mid-download
+                'continuedl': False,
                 'retries': 10,
                 'fragment_retries': 10,
                 'file_access_retries': 5,
                 'no_color': True,
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': ['android', 'web'],
-                    }
-                },
             }
+            if is_tiktok:
+                ydl_opts['cookiesfrombrowser'] = ('chrome',)
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(self.url, download=True)
                 filename = ydl.prepare_filename(info)
                 self.finished_signal.emit(filename)
         except Exception as e:
+            for part_file in glob.glob(os.path.join(self.save_path, '*.part')):
+                try:
+                    if os.path.getmtime(part_file) >= download_started_at:
+                        os.remove(part_file)
+                except OSError:
+                    pass
             self.error_signal.emit(str(e))
 
 
@@ -247,11 +254,11 @@ class YouTubeDownloader(QMainWindow):
 
     def get_format_id(self):
         format_map = {
-            0: 'bestvideo+bestaudio/best',
-            1: 'bestvideo[height<=1080]+bestaudio/best[height<=1080]',
-            2: 'bestvideo[height<=720]+bestaudio/best[height<=720]',
-            3: 'bestvideo[height<=480]+bestaudio/best[height<=480]',
-            4: 'bestvideo[height<=360]+bestaudio/best[height<=360]',
+            0: 'bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[vcodec!^=av01]+bestaudio/best',
+            1: 'bestvideo[height<=1080][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=1080][vcodec!^=av01]+bestaudio/best[height<=1080]',
+            2: 'bestvideo[height<=720][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=720][vcodec!^=av01]+bestaudio/best[height<=720]',
+            3: 'bestvideo[height<=480][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=480][vcodec!^=av01]+bestaudio/best[height<=480]',
+            4: 'bestvideo[height<=360][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=360][vcodec!^=av01]+bestaudio/best[height<=360]',
             5: 'bestaudio/best',
             6: 'bestaudio[abr<=128]/best'
         }
@@ -294,6 +301,11 @@ class YouTubeDownloader(QMainWindow):
 
     def download_error(self, error):
         clean_error = re.sub(r'\x1b\[[0-9;]*[mGKH]', '', error)
+        if 'Could not copy Chrome cookie database' in clean_error:
+            clean_error = (
+                '无法读取 Chrome Cookie。请先完全关闭 Chrome 浏览器后再重试 TikTok 下载，'
+                '否则 TikTok 网页验证会返回 Unexpected response。'
+            )
         self.download_button.setEnabled(True)
         self.download_button.setText('Start Download')
         self.status_label.setText('Status: Error occurred')
